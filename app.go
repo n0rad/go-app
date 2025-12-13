@@ -15,18 +15,41 @@ import (
 	"github.com/n0rad/go-erlog/data"
 	"github.com/n0rad/go-erlog/errs"
 	"github.com/n0rad/go-erlog/logs"
+	"gopkg.in/yaml.v3"
 )
 
 const pathAssets = "assets"
 const pathLock = "lock"
 const pathVersion = "version"
+const pathConfig = "config.yaml"
 
 type App struct {
 	Name       string
 	Home       string
-	Version    version.SemVersion
-	Assets     embed.FS
+	Version    string
+	Assets     *embed.FS
 	AssetsPath string
+
+	//semVersion version.SemVersion
+}
+
+func (app *App) LoadConfig() error {
+	configFullPath := filepath.Join(app.Home, pathConfig)
+	if stat, err := os.Stat(configFullPath); os.IsNotExist(err) {
+		return nil
+	} else if stat.IsDir() {
+		return errs.WithEF(err, data.WithField("path", configFullPath), "Folder found on config location")
+	}
+
+	bytes, err := os.ReadFile(configFullPath)
+	if err != nil {
+		return errs.WithEF(err, data.WithField("path", configFullPath), "Failed to read config file")
+	}
+
+	if err := yaml.Unmarshal(bytes, app); err != nil {
+		return errs.WithEF(err, data.WithField("content", string(bytes)).WithField("path", configFullPath), "Failed to parse config file")
+	}
+	return nil
 }
 
 func (app *App) DefaultHomeFolder() string {
@@ -38,43 +61,62 @@ func (app *App) DefaultHomeFolder() string {
 	return filepath.Join(home, ".config/"+app.Name)
 }
 
-func (app *App) PrepareHome() error {
+func (app *App) Init(home string) error {
+	// Internal binary app version
+	//if semVersion, err := semver.Parse(app.Version); err != nil {
+	//	return errs.WithEF(err, data.WithField("Version", app.Version), "Failed to parse application Version")
+	//} else {
+	//	app.semVersion = version.SemVersion{Version: semVersion}
+	//}
+
+	// prepare home
+	app.Home = home
 	if err := os.MkdirAll(app.Home, 0755); err != nil {
 		return errs.WithEF(err, data.WithField("path", app.Home), "Failed to create "+app.Name+" home directory")
 	}
 
+	// home version
 	lock := flock.New(filepath.Join(app.Home, pathLock))
 	if err := lock.Lock(); err != nil {
 		return errs.WithE(err, "Failed to get home preparation lock")
 	}
 	defer lock.Unlock()
-
-	bytes, err := os.ReadFile(filepath.Join(app.Home, pathVersion))
+	homeVersionBytes, err := os.ReadFile(filepath.Join(app.Home, pathVersion))
 	if err != nil {
 		logs.WithE(err).Warn("Failed to read home version. May be first run")
 	}
 
-	app.AssetsPath = filepath.Join(app.Home, pathAssets, app.Version.String())
-	if app.Version.String() == "0.0.0" || string(bytes) != app.Version.String() || err != nil {
-		logs.WithField("homeVersion", string(bytes)).
-			WithField("currentVersion", app.Version.String()).
-			Info(app.Name + " version changed")
+	// config
+	if err := app.LoadConfig(); err != nil {
+		return err
+	}
 
-		if err := os.RemoveAll(app.AssetsPath); err != nil {
-			logs.WithE(err).Warn("Failed to cleanup current assets before extract")
+	// assets
+	if app.Assets != nil {
+		app.AssetsPath = filepath.Join(app.Home, pathAssets, app.Version)
+		if app.Version == "0.0.0" || string(homeVersionBytes) != app.Version || err != nil {
+			logs.WithField("homeVersion", string(homeVersionBytes)).
+				WithField("currentVersion", app.Version).
+				Info(app.Name + " version changed")
+
+			if err := os.RemoveAll(app.AssetsPath); err != nil {
+				logs.WithE(err).Warn("Failed to cleanup current assets before extract")
+			}
+
+			if err := app.extractAssets(app.AssetsPath); err != nil {
+				return errs.WithEF(err, data.WithField("path", app.AssetsPath), "Failed to restore assets")
+			}
 		}
 
-		if err := app.extractAssets(app.AssetsPath); err != nil {
-			return errs.WithEF(err, data.WithField("path", app.AssetsPath), "Failed to restore assets")
-		}
-
-		if err := os.WriteFile(filepath.Join(app.Home, pathVersion), []byte(app.Version.String()), 0644); err != nil {
-			logs.WithE(err).Error("Failed to write current " + app.Name + " version to home")
+		if err := app.cleanupAssets(); err != nil {
+			logs.WithE(err).Warn("Problem during assets cleanup")
 		}
 	}
 
-	if err := app.cleanupAssets(); err != nil {
-		logs.WithE(err).Warn("Problem during assets cleanup")
+	if string(homeVersionBytes) != app.Version {
+		if err := os.WriteFile(filepath.Join(app.Home, pathVersion), []byte(app.Version), 0644); err != nil {
+			logs.WithE(err).Error("Failed to write current " + app.Name + " version to home")
+		}
 	}
 
 	return nil
@@ -149,7 +191,7 @@ func (app *App) cleanupAssets() error {
 		})
 
 		oldestAssets := assets[0]
-		if oldestAssets == app.Version.String() {
+		if oldestAssets == app.Version {
 			logs.WithField("assets", oldestAssets).Debug("oldest app assets version is currently used version, not cleaning it up")
 			return nil
 		}

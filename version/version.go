@@ -2,13 +2,14 @@ package version
 
 import (
 	"fmt"
-	"github.com/becloudless/becloudless/pkg/git"
-	"github.com/blang/semver/v4"
-	"github.com/n0rad/go-erlog/errs"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/becloudless/becloudless/pkg/git"
+	"github.com/blang/semver/v4"
+	"github.com/n0rad/go-erlog/errs"
 )
 
 type Version struct {
