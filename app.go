@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/gofrs/flock"
 	"github.com/mitchellh/go-homedir"
@@ -18,17 +17,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const pathAssets = "assets"
+const pathEmbedded = "embedded"
 const pathLock = "lock"
 const pathVersion = "version"
 const pathConfig = "config.yaml"
 
 type App struct {
-	Name       string
-	Home       string
-	Version    string
-	Assets     *embed.FS
-	AssetsPath string
+	Name         string
+	Home         string
+	Version      string
+	Embedded     *embed.FS
+	EmbeddedPath string
 
 	//semVersion version.SemVersion
 }
@@ -91,25 +90,25 @@ func (app *App) Init(home string) error {
 		return err
 	}
 
-	// assets
-	if app.Assets != nil {
-		app.AssetsPath = filepath.Join(app.Home, pathAssets, app.Version)
+	// embedded
+	if app.Embedded != nil {
+		app.EmbeddedPath = filepath.Join(app.Home, pathEmbedded, app.Version)
 		if app.Version == "0.0.0" || string(homeVersionBytes) != app.Version || err != nil {
 			logs.WithField("homeVersion", string(homeVersionBytes)).
 				WithField("currentVersion", app.Version).
 				Info(app.Name + " version changed")
 
-			if err := os.RemoveAll(app.AssetsPath); err != nil {
-				logs.WithE(err).Warn("Failed to cleanup current assets before extract")
+			if err := os.RemoveAll(app.EmbeddedPath); err != nil {
+				logs.WithE(err).Warn("Failed to cleanup current embedded before extract")
 			}
 
-			if err := app.extractAssets(app.AssetsPath); err != nil {
-				return errs.WithEF(err, data.WithField("path", app.AssetsPath), "Failed to restore assets")
+			if err := app.extractEmbedded(app.EmbeddedPath); err != nil {
+				return errs.WithEF(err, data.WithField("path", app.EmbeddedPath), "Failed to restore embedded")
 			}
 		}
 
-		if err := app.cleanupAssets(); err != nil {
-			logs.WithE(err).Warn("Problem during assets cleanup")
+		if err := app.cleanupEmbedded(); err != nil {
+			logs.WithE(err).Warn("Problem during embedded cleanup")
 		}
 	}
 
@@ -124,23 +123,22 @@ func (app *App) Init(home string) error {
 
 ///////////////////
 
-func (app *App) extractAssets(target string) error {
-	return fs.WalkDir(app.Assets, ".", func(path string, d fs.DirEntry, err error) error {
+func (app *App) extractEmbedded(target string) error {
+	return fs.WalkDir(app.Embedded, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		pathsWithoutPrefix := strings.Split(path, string(filepath.Separator))[1:]
-		newPath := filepath.Join(append([]string{target}, pathsWithoutPrefix...)...)
+		newPath := filepath.Join(target, path)
 		if d.IsDir() {
 			return os.MkdirAll(newPath, 0755)
 		}
 
 		if !d.Type().IsRegular() {
-			return errs.WithF(data.WithField("path", path), "Embedded asset is invalid, not a regular file")
+			return errs.WithF(data.WithField("path", path), "Embedded is invalid, not a regular file")
 		}
 
-		r, err := app.Assets.Open(path)
+		r, err := app.Embedded.Open(path)
 		if err != nil {
 			return err
 		}
@@ -156,48 +154,48 @@ func (app *App) extractAssets(target string) error {
 
 		if _, err := io.Copy(w, r); err != nil {
 			w.Close()
-			return errs.WithEF(err, data.WithField("path", path), "Failed to extract asset")
+			return errs.WithEF(err, data.WithField("path", path), "Failed to extract embedded")
 		}
 		return w.Close()
 	})
 }
 
-func (app *App) cleanupAssets() error {
-	dir, err := os.ReadDir(filepath.Join(app.Home, pathAssets))
+func (app *App) cleanupEmbedded() error {
+	dir, err := os.ReadDir(filepath.Join(app.Home, pathEmbedded))
 	if err != nil {
 		return errs.WithE(err, "Failed to read home folder")
 	}
-	var assets []string
+	var embeddedVersions []string
 	for _, entry := range dir {
-		assets = append(assets, entry.Name())
+		embeddedVersions = append(embeddedVersions, entry.Name())
 	}
 
-	// Multiple process could be running in parallel and there is no way to know if we can clean up assets without monitoring process.
+	// Multiple process could be running in parallel and there is no way to know if we can clean up embedded without monitoring process.
 	// To not do process monitoring, we can assume the app will not be updated more than 2 times without having process completed
-	// So we keep 2 assets + one being installed
-	if len(assets) > 3 {
-		sort.Slice(assets, func(i, j int) bool {
-			ai, err := version.Parse(assets[i])
+	// So we keep 2 embedded + one being installed
+	if len(embeddedVersions) > 3 {
+		sort.Slice(embeddedVersions, func(i, j int) bool {
+			ai, err := version.Parse(embeddedVersions[i])
 			if err != nil {
-				logs.WithEF(err, data.WithField("assets", i)).Warn("Failed to read assets version")
+				logs.WithEF(err, data.WithField("embedded", i)).Warn("Failed to read embedded version")
 				return false
 			}
-			aj, err := version.Parse(assets[j])
+			aj, err := version.Parse(embeddedVersions[j])
 			if err != nil {
-				logs.WithEF(err, data.WithField("assets", j)).Warn("Failed to read assets version")
+				logs.WithEF(err, data.WithField("embedded", j)).Warn("Failed to read embedded version")
 				return false
 			}
 			return ai.Compare(aj) < 0
 		})
 
-		oldestAssets := assets[0]
-		if oldestAssets == app.Version {
-			logs.WithField("assets", oldestAssets).Debug("oldest app assets version is currently used version, not cleaning it up")
+		oldestEmbedded := embeddedVersions[0]
+		if oldestEmbedded == app.Version {
+			logs.WithField("embedded", oldestEmbedded).Debug("oldest app embedded version is currently used version, not cleaning it up")
 			return nil
 		}
-		toCleanupPath := filepath.Join(app.Home, pathAssets, oldestAssets)
+		toCleanupPath := filepath.Join(app.Home, pathEmbedded, oldestEmbedded)
 		if err := os.RemoveAll(toCleanupPath); err != nil {
-			return errs.WithEF(err, data.WithField("folder", toCleanupPath), "Failed to cleanup old assets")
+			return errs.WithEF(err, data.WithField("folder", toCleanupPath), "Failed to cleanup old embedded")
 		}
 	}
 	return nil
