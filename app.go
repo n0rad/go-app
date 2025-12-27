@@ -32,7 +32,7 @@ type App struct {
 	//semVersion version.SemVersion
 }
 
-func (app *App) LoadConfig() error {
+func (app *App) LoadConfig(self any) error {
 	configFullPath := filepath.Join(app.Home, pathConfig)
 	if stat, err := os.Stat(configFullPath); os.IsNotExist(err) {
 		return nil
@@ -45,7 +45,7 @@ func (app *App) LoadConfig() error {
 		return errs.WithEF(err, data.WithField("path", configFullPath), "Failed to read config file")
 	}
 
-	if err := yaml.Unmarshal(bytes, app); err != nil {
+	if err := yaml.Unmarshal(bytes, self); err != nil {
 		return errs.WithEF(err, data.WithField("content", string(bytes)).WithField("path", configFullPath), "Failed to parse config file")
 	}
 	return nil
@@ -60,7 +60,7 @@ func (app *App) DefaultHomeFolder() string {
 	return filepath.Join(home, ".config/"+app.Name)
 }
 
-func (app *App) Init(home string) error {
+func (app *App) Init(home string, self any) error {
 	// Internal binary app version
 	//if semVersion, err := semver.Parse(app.Version); err != nil {
 	//	return errs.WithEF(err, data.WithField("Version", app.Version), "Failed to parse application Version")
@@ -86,7 +86,7 @@ func (app *App) Init(home string) error {
 	}
 
 	// config
-	if err := app.LoadConfig(); err != nil {
+	if err := app.LoadConfig(self); err != nil {
 		return err
 	}
 
