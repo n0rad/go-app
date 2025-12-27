@@ -1,6 +1,8 @@
 module github.com/n0rad/go-app
 
-go 1.24.4
+go 1.24.0
+
+toolchain go1.24.4
 
 require (
 	github.com/becloudless/becloudless v0.0.0-20250927163648-ded771c85349
@@ -9,6 +11,7 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/n0rad/go-erlog v0.0.0-20240412093139-2d3c00f17991
 	github.com/stretchr/testify v1.11.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -31,5 +34,4 @@ require (
 	golang.org/x/exp v0.0.0-20250531010427-b6e5de432a8b // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
